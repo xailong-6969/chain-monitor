@@ -152,7 +152,7 @@ async function ensureSchema(db) {
     db.prepare(`CREATE TABLE IF NOT EXISTS redemptions (id TEXT PRIMARY KEY, block_number INTEGER, timestamp_ INTEGER, tx_hash TEXT, market_proxy TEXT, redeemer TEXT, shares_in TEXT, tokens_out INTEGER)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS liquidations (id TEXT PRIMARY KEY, block_number INTEGER, timestamp_ INTEGER, tx_hash TEXT, market_proxy TEXT, liquidator TEXT, outcome_indices TEXT, shares_in TEXT, total_tokens_out INTEGER)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS resolutions (id TEXT PRIMARY KEY, block_number INTEGER, timestamp_ INTEGER, tx_hash TEXT, market_proxy TEXT, winning_outcome_idx INTEGER, market_creator_reward INTEGER, refund INTEGER, market_creator_trading_fees INTEGER)`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS sync_log (table_name TEXT PRIMARY KEY, last_block INTEGER DEFAULT 0, last_synced TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS sync_log (table_name TEXT PRIMARY KEY, last_block INTEGER DEFAULT 0, last_synced TEXT, last_id TEXT DEFAULT '', pending_max_block INTEGER DEFAULT 0)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS chain_snapshots (ts INTEGER PRIMARY KEY, txs_today INTEGER, total_addresses INTEGER)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS markets (market_proxy TEXT PRIMARY KEY, creator TEXT, tx_hash TEXT, block_number INTEGER, timestamp_ INTEGER)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS creators (address TEXT PRIMARY KEY, name TEXT)`),
@@ -165,6 +165,8 @@ async function ensureSchema(db) {
     db.prepare(`INSERT OR IGNORE INTO sync_log(table_name, last_block) VALUES ('markets', 0)`),
   ]);
 
+  await ensureSyncLogColumns(db);
+
   // Seed known creators (INSERT OR IGNORE so manual name updates are preserved)
   const seedStmts = KNOWN_CREATORS.map(addr =>
     db.prepare('INSERT OR IGNORE INTO creators (address) VALUES (?)').bind(addr)
@@ -172,6 +174,19 @@ async function ensureSchema(db) {
   for (let i = 0; i < seedStmts.length; i += 100) {
     await db.batch(seedStmts.slice(i, i + 100));
   }
+}
+
+async function ensureSyncLogColumns(db) {
+  const res = await db.prepare('PRAGMA table_info(sync_log)').all();
+  const cols = new Set((res.results || []).map(col => col.name));
+  const stmts = [];
+  if (!cols.has('last_id')) {
+    stmts.push(db.prepare(`ALTER TABLE sync_log ADD COLUMN last_id TEXT DEFAULT ''`));
+  }
+  if (!cols.has('pending_max_block')) {
+    stmts.push(db.prepare(`ALTER TABLE sync_log ADD COLUMN pending_max_block INTEGER DEFAULT 0`));
+  }
+  if (stmts.length) await db.batch(stmts);
 }
 
 async function fetchChainSnapshot(db) {
@@ -183,7 +198,7 @@ async function fetchChainSnapshot(db) {
 }
 
 async function fetchDelphiStats(db) {
-  const [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, r32, r33, r34, r35, r36, r37, r38, r39, r40, r41, r42, r43, r44, r45] = await db.batch([
+  const [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, r32, r33, r34, r35, r36, r37, r38, r39, r40, r41, r42, r43, r44, r45, r46, r47] = await db.batch([
     db.prepare('SELECT COALESCE(SUM(tokens_in),0)  AS v FROM buys'),
     db.prepare('SELECT COALESCE(SUM(tokens_out),0) AS v FROM sells'),
     db.prepare('SELECT COALESCE(SUM(tokens_out),0) AS v FROM redemptions'),
@@ -232,6 +247,8 @@ async function fetchDelphiStats(db) {
     db.prepare(`SELECT COALESCE(SUM(tokens_out), 0) AS v FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COALESCE(SUM(tokens_in), 0) AS v FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COALESCE(SUM(tokens_out), 0) AS v FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
+    db.prepare(`SELECT COUNT(*) AS v FROM (SELECT id FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 604800 UNION ALL SELECT id FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 604800)`),
+    db.prepare(`SELECT COUNT(*) AS v FROM (SELECT id FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800 UNION ALL SELECT id FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800)`),
     db.prepare(`SELECT COALESCE(SUM(tokens_in),0) AS v FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COALESCE(SUM(tokens_out),0) AS v FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COUNT(*) AS v FROM (SELECT id FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800 UNION ALL SELECT id FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800)`),
@@ -275,21 +292,21 @@ async function fetchDelphiStats(db) {
     vol_prev7d:          v(r33) + v(r34),
     trades_7d:           v(r35),
     trades_prev7d:       v(r36),
-    vol_7d_ago:          v(r35) + v(r36),
-    trades_7d_ago:       v(r37),
-    traders_7d_ago:      v(r38),
-    markets_7d_ago:      v(r39),
-    resolutions_7d_ago:  v(r40),
-    fees_7d_ago:         v(r41),
+    vol_7d_ago:          v(r37) + v(r38),
+    trades_7d_ago:       v(r39),
+    traders_7d_ago:      v(r40),
+    markets_7d_ago:      v(r41),
+    resolutions_7d_ago:  v(r42),
+    fees_7d_ago:         v(r43),
     vol_prev24h:         v(r21) + v(r22),
     traders_prev24h:     v(r23),
     resolutions_prev24h: v(r24),
     markets_prev24h:     v(r25),
     fees_prev24h:        v(r26),
-    vol_daily:           r42.results || [],
-    vol_6h:              r43.results || [],
-    count_daily:         r44.results || [],
-    trade_amounts_7d:    (r45.results || []).map(r => r.amount / 1e6),
+    vol_daily:           r44.results || [],
+    vol_6h:              r45.results || [],
+    count_daily:         r46.results || [],
+    trade_amounts_7d:    (r47.results || []).map(r => r.amount / 1e6),
     creator_stats:       await fetchCreatorStats(db),
   };
 }
@@ -358,6 +375,10 @@ async function fetchUsdce24hVolume() {
 
 // ── Goldsky → D1 sync (runs on cron) ─────────────────────────────────────
 
+const GOLDSKY_PAGE = 100;
+const MAX_SYNC_PAGES_PER_RUN = 8;
+const RECENT_BLOCK_OVERLAP = 25;
+
 async function gql(query) {
   const r = await fetch(GOLDSKY_URL, {
     method: 'POST',
@@ -367,19 +388,11 @@ async function gql(query) {
   return (await r.json()).data;
 }
 
-async function fetchAllSince(entity, fields, blockGt) {
-  const rows = [];
-  let lastId = '';
-  while (true) {
-    const idFilter = lastId ? `, id_gt: "${lastId}"` : '';
-    const q = `{ ${entity}(first: 100, orderBy: id, orderDirection: asc,
-      where: { block_number_gt: "${blockGt}"${idFilter} }) { ${fields} } }`;
-    const batch = (await gql(q))[entity] || [];
-    rows.push(...batch);
-    if (batch.length < 100) break;
-    lastId = batch[batch.length - 1].id;
-  }
-  return rows;
+async function fetchPageSince(entity, fields, blockGt, idGt) {
+  const idFilter = idGt ? `, id_gt: "${idGt}"` : '';
+  const q = `{ ${entity}(first: ${GOLDSKY_PAGE}, orderBy: id, orderDirection: asc,
+    where: { block_number_gt: "${blockGt}"${idFilter} }) { ${fields} } }`;
+  return ((await gql(q))?.[entity]) || [];
 }
 
 function maxBlock(rows) {
@@ -391,21 +404,47 @@ function maxBlock(rows) {
   return max;
 }
 
-async function syncTable(db, tableName, entity, fields, makeStmt) {
-  const cur   = await db.prepare('SELECT last_block FROM sync_log WHERE table_name=?').bind(tableName).first();
-  const since = cur?.last_block ?? 0;
-  const rows  = await fetchAllSince(entity, fields, since);
-  if (!rows.length) return 0;
+async function saveSyncProgress(db, tableName, lastBlock, lastId, pendingMaxBlock) {
+  await db.prepare('UPDATE sync_log SET last_block=?, last_id=?, pending_max_block=?, last_synced=? WHERE table_name=?')
+    .bind(lastBlock, lastId, pendingMaxBlock, new Date().toISOString(), tableName).run();
+}
 
-  // D1 caps batch at 100 statements
-  const stmts = rows.map(r => makeStmt(db, r));
-  for (let i = 0; i < stmts.length; i += 100) {
-    await db.batch(stmts.slice(i, i + 100));
+async function syncTable(db, tableName, entity, fields, makeStmt, pageBudget) {
+  const cur = await db.prepare('SELECT last_block, last_id, pending_max_block FROM sync_log WHERE table_name=?')
+    .bind(tableName).first();
+  const since = cur?.last_block ?? 0;
+  let lastId = cur?.last_id || '';
+  let pendingMaxBlock = Math.max(cur?.pending_max_block ?? 0, since);
+  let rowsSynced = 0;
+  let pagesUsed = 0;
+
+  while (pagesUsed < pageBudget) {
+    const batch = await fetchPageSince(entity, fields, since, lastId);
+    pagesUsed++;
+
+    if (!batch.length) {
+      if (lastId) {
+        const finalBlock = Math.max(since, pendingMaxBlock - RECENT_BLOCK_OVERLAP);
+        await saveSyncProgress(db, tableName, finalBlock, '', 0);
+      }
+      return { rows: rowsSynced, pages: pagesUsed };
+    }
+
+    await db.batch(batch.map(r => makeStmt(db, r)));
+    rowsSynced += batch.length;
+    pendingMaxBlock = Math.max(pendingMaxBlock, maxBlock(batch));
+
+    if (batch.length < GOLDSKY_PAGE) {
+      const finalBlock = Math.max(since, pendingMaxBlock - RECENT_BLOCK_OVERLAP);
+      await saveSyncProgress(db, tableName, finalBlock, '', 0);
+      return { rows: rowsSynced, pages: pagesUsed };
+    }
+
+    lastId = batch[batch.length - 1].id;
+    await saveSyncProgress(db, tableName, since, lastId, pendingMaxBlock);
   }
-  const lastBlock = maxBlock(rows);
-  await db.prepare('UPDATE sync_log SET last_block=?, last_synced=? WHERE table_name=?')
-    .bind(lastBlock, new Date().toISOString(), tableName).run();
-  return rows.length;
+
+  return { rows: rowsSynced, pages: pagesUsed };
 }
 
 async function syncDelphi(env) {
@@ -424,32 +463,40 @@ async function syncDelphi(env) {
     }
   } catch (_) {}
 
-  await syncTable(db, 'buys', 'gatewayBuys',
+  let pageBudget = MAX_SYNC_PAGES_PER_RUN;
+  const syncWithBudget = async (...args) => {
+    if (pageBudget <= 0) return 0;
+    const result = await syncTable(...args, pageBudget);
+    pageBudget -= result.pages;
+    return result.rows;
+  };
+
+  await syncWithBudget(db, 'buys', 'gatewayBuys',
     'id block_number timestamp_ transactionHash_ marketProxy buyer outcomeIdx tokensIn sharesOut',
     (db, r) => db.prepare('INSERT OR IGNORE INTO buys VALUES (?,?,?,?,?,?,?,?,?)')
       .bind(r.id, +r.block_number, +r.timestamp_, r.transactionHash_, r.marketProxy, r.buyer, +r.outcomeIdx, +r.tokensIn, r.sharesOut));
 
-  await syncTable(db, 'sells', 'gatewaySells',
+  await syncWithBudget(db, 'sells', 'gatewaySells',
     'id block_number timestamp_ transactionHash_ marketProxy seller outcomeIdx sharesIn tokensOut',
     (db, r) => db.prepare('INSERT OR IGNORE INTO sells VALUES (?,?,?,?,?,?,?,?,?)')
       .bind(r.id, +r.block_number, +r.timestamp_, r.transactionHash_, r.marketProxy, r.seller, +r.outcomeIdx, r.sharesIn, +r.tokensOut));
 
-  await syncTable(db, 'redemptions', 'gatewayRedemptions',
+  await syncWithBudget(db, 'redemptions', 'gatewayRedemptions',
     'id block_number timestamp_ transactionHash_ marketProxy redeemer sharesIn tokensOut',
     (db, r) => db.prepare('INSERT OR IGNORE INTO redemptions VALUES (?,?,?,?,?,?,?,?)')
       .bind(r.id, +r.block_number, +r.timestamp_, r.transactionHash_, r.marketProxy, r.redeemer, r.sharesIn, +r.tokensOut));
 
-  await syncTable(db, 'liquidations', 'gatewayLiquidations',
+  await syncWithBudget(db, 'liquidations', 'gatewayLiquidations',
     'id block_number timestamp_ transactionHash_ marketProxy liquidator outcomeIndices sharesIn totalTokensOut',
     (db, r) => db.prepare('INSERT OR IGNORE INTO liquidations VALUES (?,?,?,?,?,?,?,?,?)')
       .bind(r.id, +r.block_number, +r.timestamp_, r.transactionHash_, r.marketProxy, r.liquidator, r.outcomeIndices, r.sharesIn, +r.totalTokensOut));
 
-  await syncTable(db, 'resolutions', 'gatewayWinnerSubmitteds',
+  await syncWithBudget(db, 'resolutions', 'gatewayWinnerSubmitteds',
     'id block_number timestamp_ transactionHash_ marketProxy winningOutcomeIdx marketCreatorReward refund marketCreatorTradingFeesCut',
     (db, r) => db.prepare('INSERT OR IGNORE INTO resolutions VALUES (?,?,?,?,?,?,?,?,?)')
       .bind(r.id, +r.block_number, +r.timestamp_, r.transactionHash_, r.marketProxy, +r.winningOutcomeIdx, +r.marketCreatorReward, +r.refund, +r.marketCreatorTradingFeesCut));
 
-  await syncTable(db, 'markets', 'initializeds',
+  await syncWithBudget(db, 'markets', 'initializeds',
     'id block_number timestamp_ transactionHash_ contractId_',
     (db, r) => db.prepare('INSERT OR IGNORE INTO markets (market_proxy, tx_hash, block_number, timestamp_) VALUES (?,?,?,?)')
       .bind(r.contractId_.toLowerCase(), r.transactionHash_, +r.block_number, +r.timestamp_));

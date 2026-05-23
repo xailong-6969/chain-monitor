@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS resolutions (
 CREATE TABLE IF NOT EXISTS sync_log (
     table_name  TEXT PRIMARY KEY,
     last_block  INTEGER DEFAULT 0,
+    last_id     TEXT DEFAULT '',
+    pending_max_block INTEGER DEFAULT 0,
     last_synced TEXT
 );
 INSERT OR IGNORE INTO sync_log(table_name, last_block) VALUES ('buys',        0);
