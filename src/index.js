@@ -183,7 +183,7 @@ async function fetchChainSnapshot(db) {
 }
 
 async function fetchDelphiStats(db) {
-  const [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, r32, r33, r34, r35, r36, r37, r38, r39, r40, r41, r42, r43, r44, r45] = await db.batch([
+  const [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, r32, r33, r34, r35, r36, r37, r38, r39, r40, r41, r42, r43, r44, r45, r46, r47] = await db.batch([
     db.prepare('SELECT COALESCE(SUM(tokens_in),0)  AS v FROM buys'),
     db.prepare('SELECT COALESCE(SUM(tokens_out),0) AS v FROM sells'),
     db.prepare('SELECT COALESCE(SUM(tokens_out),0) AS v FROM redemptions'),
@@ -232,6 +232,8 @@ async function fetchDelphiStats(db) {
     db.prepare(`SELECT COALESCE(SUM(tokens_out), 0) AS v FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COALESCE(SUM(tokens_in), 0) AS v FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COALESCE(SUM(tokens_out), 0) AS v FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
+    db.prepare(`SELECT COUNT(*) AS v FROM (SELECT id FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 604800 UNION ALL SELECT id FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 604800)`),
+    db.prepare(`SELECT COUNT(*) AS v FROM (SELECT id FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800 UNION ALL SELECT id FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 1209600 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800)`),
     db.prepare(`SELECT COALESCE(SUM(tokens_in),0) AS v FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COALESCE(SUM(tokens_out),0) AS v FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800`),
     db.prepare(`SELECT COUNT(*) AS v FROM (SELECT id FROM buys WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800 UNION ALL SELECT id FROM sells WHERE timestamp_ > CAST(strftime('%s','now') AS INTEGER) - 691200 AND timestamp_ <= CAST(strftime('%s','now') AS INTEGER) - 604800)`),
@@ -275,21 +277,21 @@ async function fetchDelphiStats(db) {
     vol_prev7d:          v(r33) + v(r34),
     trades_7d:           v(r35),
     trades_prev7d:       v(r36),
-    vol_7d_ago:          v(r35) + v(r36),
-    trades_7d_ago:       v(r37),
-    traders_7d_ago:      v(r38),
-    markets_7d_ago:      v(r39),
-    resolutions_7d_ago:  v(r40),
-    fees_7d_ago:         v(r41),
+    vol_7d_ago:          v(r37) + v(r38),
+    trades_7d_ago:       v(r39),
+    traders_7d_ago:      v(r40),
+    markets_7d_ago:      v(r41),
+    resolutions_7d_ago:  v(r42),
+    fees_7d_ago:         v(r43),
     vol_prev24h:         v(r21) + v(r22),
     traders_prev24h:     v(r23),
     resolutions_prev24h: v(r24),
     markets_prev24h:     v(r25),
     fees_prev24h:        v(r26),
-    vol_daily:           r42.results || [],
-    vol_6h:              r43.results || [],
-    count_daily:         r44.results || [],
-    trade_amounts_7d:    (r45.results || []).map(r => r.amount / 1e6),
+    vol_daily:           r44.results || [],
+    vol_6h:              r45.results || [],
+    count_daily:         r46.results || [],
+    trade_amounts_7d:    (r47.results || []).map(r => r.amount / 1e6),
     creator_stats:       await fetchCreatorStats(db),
   };
 }
